@@ -3,6 +3,7 @@ name: 🧾 Task
 about: Create a general task to track progress
 title: "[TASK] "
 labels: task
+type: task
 assignees: ''
 ---
 
