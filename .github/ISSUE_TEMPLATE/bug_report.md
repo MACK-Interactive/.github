@@ -7,7 +7,7 @@ type: bug
 assignees: ''
 ---
 
-## 🧩 Description
+## 📝 Description
 Clearly describe the issue you are experiencing.
 
 ## 🔁 Steps to Reproduce
