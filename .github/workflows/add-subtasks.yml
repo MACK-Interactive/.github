@@ -1,0 +1,314 @@
+name: Add default sub-issues
+on:
+  workflow_call:
+    inputs:
+      owner:
+        required: true
+        type: string
+      repo:
+        required: true
+        type: string
+      issue_number:
+        required: true
+        type: number
+      issue_title:
+        required: true
+        type: string
+      action:
+        required: true
+        type: string
+      has_required_label:
+        required: true
+        type: boolean
+      label_name:
+        required: false
+        default: ""
+        type: string
+      required_label:
+        required: false
+        default: with-subtasks
+        type: string
+      subtasks_json:
+        required: false
+        default: '["Design","Dev","API Update","QA"]'
+        type: string
+      link_mode:
+        required: false
+        default: ""
+        type: string
+      subtask_body_template:
+        required: false
+        default: |
+          ## Context
+          Sub-task for #{{PARENT_ISSUE_NUMBER}}
+          ## Parent issue
+          {{PARENT_ISSUE_TITLE}}
+          ## Scope
+          {{SUBTASK_NAME}}
+          ## Checklist
+          - [ ] Implement
+          - [ ] Test
+          - [ ] Document
+          <!-- parent-issue:{{PARENT_ISSUE_NUMBER}} -->
+        type: string
+permissions:
+  issues: write
+  contents: read
+jobs:
+  add-subtasks:
+    concurrency:
+      group: add-subtasks-${{ inputs.owner }}-${{ inputs.repo }}-${{ inputs.issue_number }}
+      cancel-in-progress: false
+    if: >
+      (inputs.action == 'opened' && inputs.has_required_label) ||
+      (inputs.action == 'labeled' && inputs.label_name == inputs.required_label)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Create configured sub-issues
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const owner = ${{ toJSON(inputs.owner) }};
+            const repo = ${{ toJSON(inputs.repo) }};
+            const parentIssueNumber = Number(${{ toJSON(inputs.issue_number) }});
+            const parentIssueTitle = ${{ toJSON(inputs.issue_title) }};
+            const action = ${{ toJSON(inputs.action) }};
+            const hasRequiredLabel = ${{ toJSON(inputs.has_required_label) }};
+            const labelName = ${{ toJSON(inputs.label_name) }};
+            const requiredLabel = ${{ toJSON(inputs.required_label) }};
+            const parentReference = `Sub-task for #${parentIssueNumber}`;
+            const parentMarker = `<!-- parent-issue:${parentIssueNumber} -->`;
+            const subtasksRaw = ${{ toJSON(inputs.subtasks_json) }};
+            const linkModeRaw = ${{ toJSON(inputs.link_mode) }};
+            const subtaskBodyTemplateRaw = ${{ toJSON(inputs.subtask_body_template) }};
+            const allowedOwner = "MACK-Interactive";
+            const linkMode = typeof linkModeRaw === "string" ? linkModeRaw.trim() : "";
+            function escapeForSearch(value) {
+              return value.replace(/[\\"]/g, "\\$&");
+            }
+            function isAlreadyLinkedError(error) {
+              if (!error || typeof error !== "object") {
+                return false;
+              }
+              const message = (error.message || "").toLowerCase();
+              return (
+                (message.includes("already") && message.includes("sub-issue")) ||
+                message.includes("duplicate sub-issues") ||
+                message.includes("may only have one parent")
+              );
+            }
+            function buildSubtaskBody({
+              template,
+              parentIssueNumber,
+              parentIssueTitle,
+              subtaskName,
+              parentReference,
+              parentMarker
+            }) {
+              const fallback =
+                `${parentReference}\n\n` +
+                `## Parent issue\n${parentIssueTitle}\n\n` +
+                `## Scope\n${subtaskName}\n\n` +
+                `## Checklist\n- [ ] Implement\n- [ ] Test\n- [ ] Document\n\n` +
+                `${parentMarker}`;
+              if (typeof template !== "string" || template.trim().length === 0) {
+                return fallback;
+              }
+              const rendered = template
+                .replaceAll("{{PARENT_ISSUE_NUMBER}}", String(parentIssueNumber))
+                .replaceAll("{{PARENT_ISSUE_TITLE}}", parentIssueTitle)
+                .replaceAll("{{SUBTASK_NAME}}", subtaskName)
+                .trim();
+              return rendered.includes(parentMarker)
+                ? rendered
+                : `${rendered}\n\n${parentMarker}`;
+            }
+            if (!owner || !repo || !parentIssueNumber || !parentIssueTitle) {
+              throw new Error("Missing required workflow inputs: owner/repo/issue_number/issue_title.");
+            }
+            const shouldRunForOpened = action === "opened" && hasRequiredLabel;
+            const shouldRunForLabeled = action === "labeled" && labelName === requiredLabel;
+            if (!shouldRunForOpened && !shouldRunForLabeled) {
+              throw new Error(
+                `Unsupported action/label combination: action='${action}', label='${labelName}', required='${requiredLabel}', has_required_label='${hasRequiredLabel}'.`
+              );
+            }
+            if (owner !== allowedOwner) {
+              throw new Error(`Cross-repo operation denied for owner '${owner}'. Expected '${allowedOwner}'.`);
+            }
+            let subtasks;
+            try {
+              const parsed = JSON.parse(subtasksRaw);
+              if (!Array.isArray(parsed) || parsed.length === 0) {
+                throw new Error("subtasks_json must be a non-empty JSON array of strings.");
+              }
+              if (parsed.some((item) => typeof item !== "string" || item.trim().length === 0)) {
+                throw new Error("subtasks_json contains an invalid value; all items must be non-empty strings.");
+              }
+              subtasks = parsed.map((item) => item.trim());
+            } catch (error) {
+              throw new Error(`Invalid subtasks_json: ${error.message}`);
+            }
+            if (subtasks.length > 20) {
+              throw new Error("subtasks_json has too many items. Maximum allowed is 20.");
+            }
+            if (subtasks.some((item) => item.length > 120)) {
+              throw new Error("subtasks_json contains an item longer than 120 characters.");
+            }
+            const dedupedSubtasks = [];
+            const seenSubtasks = new Set();
+            for (const item of subtasks) {
+              const key = item.toLowerCase();
+              if (seenSubtasks.has(key)) {
+                continue;
+              }
+              seenSubtasks.add(key);
+              dedupedSubtasks.push(item);
+            }
+            subtasks = dedupedSubtasks;
+            const created = [];
+            const skipped = [];
+            const failed = [];
+            async function linkSubIssue(subIssueId) {
+              const payload = {
+                owner,
+                repo,
+                issue_number: parentIssueNumber,
+                sub_issue_id: subIssueId
+              };
+              if (linkMode) {
+                payload.link_mode = linkMode;
+              }
+              await github.request(
+                "POST /repos/{owner}/{repo}/issues/{issue_number}/sub_issues",
+                payload
+              );
+            }
+            async function isSubIssueEndpointAvailable() {
+              try {
+                await github.request("GET /repos/{owner}/{repo}/issues/{issue_number}/sub_issues", {
+                  owner,
+                  repo,
+                  issue_number: parentIssueNumber
+                });
+                return true;
+              } catch (error) {
+                return false;
+              }
+            }
+            async function getCurrentSubIssueIds() {
+              const response = await github.request("GET /repos/{owner}/{repo}/issues/{issue_number}/sub_issues", {
+                owner,
+                repo,
+                issue_number: parentIssueNumber
+              });
+              const payload = response.data;
+              const list = Array.isArray(payload)
+                ? payload
+                : Array.isArray(payload?.sub_issues)
+                  ? payload.sub_issues
+                  : Array.isArray(payload?.items)
+                    ? payload.items
+                    : [];
+              const ids = new Set();
+              for (const item of list) {
+                const rawId = item?.id ?? item?.issue_id;
+                if (typeof rawId === "number") {
+                  ids.add(rawId);
+                }
+              }
+              return ids;
+            }
+            async function findExistingIssueByTitle(subtaskTitle) {
+              const query = `repo:${owner}/${repo} is:issue in:title "${escapeForSearch(subtaskTitle)}"`;
+              const results = await github.paginate(
+                github.rest.search.issuesAndPullRequests,
+                {
+                  q: query,
+                  per_page: 30
+                }
+              );
+              return results.find((candidate) => {
+                if (candidate.pull_request) {
+                  return false;
+                }
+                if (candidate.title !== subtaskTitle) {
+                  return false;
+                }
+                const body = candidate.body || "";
+                return body.includes(parentReference) || body.includes(parentMarker);
+              });
+            }
+            const endpointAvailable = await isSubIssueEndpointAvailable();
+            if (!endpointAvailable) {
+              throw new Error("Sub-issue linking endpoint is unavailable for this repository. No sub-issues were created.");
+            }
+            const linkedSubIssueIds = await getCurrentSubIssueIds();
+            for (const title of subtasks) {
+              const subtaskTitle = `${parentIssueTitle} - ${title}`;
+              try {
+                const existing = await findExistingIssueByTitle(subtaskTitle);
+                if (existing) {
+                  if (linkedSubIssueIds.has(existing.id)) {
+                    skipped.push(subtaskTitle);
+                    continue;
+                  }
+                  try {
+                    await linkSubIssue(existing.id);
+                    linkedSubIssueIds.add(existing.id);
+                  } catch (error) {
+                    if (!isAlreadyLinkedError(error)) {
+                      throw error;
+                    }
+                    linkedSubIssueIds.add(existing.id);
+                  }
+                  skipped.push(subtaskTitle);
+                  continue;
+                }
+                const subtaskBody = buildSubtaskBody({
+                  template: subtaskBodyTemplateRaw,
+                  parentIssueNumber,
+                  parentIssueTitle,
+                  subtaskName: title,
+                  parentReference,
+                  parentMarker
+                });
+                const createdIssue = await github.rest.issues.create({
+                  owner,
+                  repo,
+                  title: subtaskTitle,
+                  body: subtaskBody
+                });
+                try {
+                  await linkSubIssue(createdIssue.data.id);
+                  linkedSubIssueIds.add(createdIssue.data.id);
+                  created.push(subtaskTitle);
+                } catch (linkError) {
+                  await github.rest.issues.update({
+                    owner,
+                    repo,
+                    issue_number: createdIssue.data.number,
+                    state: "closed"
+                  });
+                  failed.push({
+                    title: subtaskTitle,
+                    error: `Linking failed; created issue #${createdIssue.data.number} was closed. ${linkError.message}`
+                  });
+                }
+              } catch (error) {
+                failed.push({
+                  title: subtaskTitle,
+                  error: error.message
+                });
+              }
+            }
+            core.info(
+              `Sub-issue processing complete for #${parentIssueNumber}. ` +
+              `Created: ${created.length}, Skipped: ${skipped.length}, Failed: ${failed.length}.`
+            );
+            if (failed.length > 0) {
+              const details = failed
+                .map((item) => `${item.title}: ${item.error}`)
+                .join("; ");
+              throw new Error(`Failed sub-issues: ${details}`);
+            }
