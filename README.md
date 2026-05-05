@@ -9,6 +9,12 @@ It creates and links default sub-issues when:
 - an issue is opened with the `with-subtasks` label
 - or the `with-subtasks` label is added later
 
+Each run also prepends a managed status badge block to the parent issue body and updates it on reruns.
+The badge remains visible and reflects the latest workflow result:
+
+- `https://img.shields.io/badge/sub--issues-added-brightgreen`
+- `https://img.shields.io/badge/sub--issues-not%20added-red`
+
 ### Default subtasks
 
 By default, the workflow creates:

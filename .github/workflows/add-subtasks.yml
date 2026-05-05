@@ -310,3 +310,49 @@ jobs:
                 .join("; ");
               throw new Error(`Failed sub-issues: ${details}`);
             }
+
+  update-parent-issue-badge:
+    needs: [add-subtasks]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Update parent issue status badge
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const owner = ${{ toJSON(inputs.owner) }};
+            const repo = ${{ toJSON(inputs.repo) }};
+            const parentIssueNumber = Number(${{ toJSON(inputs.issue_number) }});
+            const jobResult = ${{ toJSON(needs.add-subtasks.result) }};
+
+            const markerStart = "<!-- add-subtasks-status:start -->";
+            const markerEnd = "<!-- add-subtasks-status:end -->";
+            const badgeUrl = jobResult === "success"
+              ? "https://img.shields.io/badge/sub--issues-added-brightgreen"
+              : "https://img.shields.io/badge/sub--issues-not%20added-red";
+            const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+            const badgeLine = `[![Sub-issues status](${badgeUrl})](${runUrl})`;
+
+            const issue = await github.rest.issues.get({
+              owner,
+              repo,
+              issue_number: parentIssueNumber
+            });
+
+            const currentBody = typeof issue.data.body === "string" ? issue.data.body : "";
+            const managedBlockRegex = new RegExp(
+              `${markerStart}[\\s\\S]*?${markerEnd}\\n*`,
+              "g"
+            );
+            const bodyWithoutManagedBlock = currentBody.replace(managedBlockRegex, "").trimStart();
+            const managedBlock = `${markerStart}\n${badgeLine}\n${markerEnd}`;
+            const newBody = bodyWithoutManagedBlock.length > 0
+              ? `${managedBlock}\n\n${bodyWithoutManagedBlock}`
+              : managedBlock;
+
+            await github.rest.issues.update({
+              owner,
+              repo,
+              issue_number: parentIssueNumber,
+              body: newBody
+            });
