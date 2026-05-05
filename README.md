@@ -59,7 +59,7 @@ with:
     ## Context
     Sub-task for #{{PARENT_ISSUE_NUMBER}}
     ## Parent issue
-    {{PARENT_ISSUE_TITLE}}
+    #{{PARENT_ISSUE_NUMBER}}
     ## Scope
     {{SUBTASK_NAME}}
     ## Checklist
@@ -72,6 +72,7 @@ with:
 The workflow enforces a maximum of 20 subtasks and 120 characters per subtask.
 `link_mode` is optional and is forwarded to the sub-issue link API when set.
 `subtask_body_template` is optional. Supported placeholders are `{{PARENT_ISSUE_NUMBER}}`, `{{PARENT_ISSUE_TITLE}}`, and `{{SUBTASK_NAME}}`.
+By default, created sub-issue titles use only the parent issue ID: `#<parent_issue_number> - <subtask_name>`.
 
 ### Security scope
 

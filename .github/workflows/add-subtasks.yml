@@ -42,7 +42,7 @@ on:
           ## Context
           Sub-task for #{{PARENT_ISSUE_NUMBER}}
           ## Parent issue
-          {{PARENT_ISSUE_TITLE}}
+          #{{PARENT_ISSUE_NUMBER}}
           ## Scope
           {{SUBTASK_NAME}}
           ## Checklist
@@ -100,14 +100,13 @@ jobs:
             function buildSubtaskBody({
               template,
               parentIssueNumber,
-              parentIssueTitle,
               subtaskName,
               parentReference,
               parentMarker
             }) {
               const fallback =
                 `${parentReference}\n\n` +
-                `## Parent issue\n${parentIssueTitle}\n\n` +
+                `## Parent issue\n#${parentIssueNumber}\n\n` +
                 `## Scope\n${subtaskName}\n\n` +
                 `## Checklist\n- [ ] Implement\n- [ ] Test\n- [ ] Document\n\n` +
                 `${parentMarker}`;
@@ -245,7 +244,7 @@ jobs:
             }
             const linkedSubIssueIds = await getCurrentSubIssueIds();
             for (const title of subtasks) {
-              const subtaskTitle = `${parentIssueTitle} - ${title}`;
+              const subtaskTitle = `#${parentIssueNumber} - ${title}`;
               try {
                 const existing = await findExistingIssueByTitle(subtaskTitle);
                 if (existing) {
@@ -268,7 +267,6 @@ jobs:
                 const subtaskBody = buildSubtaskBody({
                   template: subtaskBodyTemplateRaw,
                   parentIssueNumber,
-                  parentIssueTitle,
                   subtaskName: title,
                   parentReference,
                   parentMarker
